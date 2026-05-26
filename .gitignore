@@ -226,4 +226,5 @@ Icon?
 .Spotlight-V100
 .Trashes
 .fseventsd
-*.mav
+*.wav
+__marimo__
