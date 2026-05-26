@@ -308,6 +308,21 @@ def score_predictions(
     raise ValueError(f"Unknown metric: {metric_name}")
 
 
+def compute_chance_score(
+    metric_name: str,
+    y: pd.Series,
+    poslabel: str | None,
+) -> float:
+    priors = y.value_counts(normalize=True)
+    if metric_name == "balanced_accuracy":
+        return float(priors.mean())
+    if poslabel is None:
+        raise ValueError(f"{metric_name} chance scoring requires a positive label.")
+    if metric_name in ("sen", "ppv"):
+        return float(priors.get(poslabel, 0.0))
+    raise ValueError(f"Unknown metric: {metric_name}")
+
+
 def build_overfitting_figure_path(metric_name: str, poslabel: str | None) -> Path:
     if poslabel is None:
         filename = f"overfitting_gap__model-multinomial__metric-{metric_name}.png"
@@ -329,6 +344,7 @@ def build_overfitting_titles(metric_name: str, poslabel: str | None) -> tuple[st
 def plot_overfitting_gap(
     train_score: float,
     cv_score: float,
+    chance_score: float,
     metric_name: str,
     n_samples: int,
     output_path: Path,
@@ -347,18 +363,37 @@ def plot_overfitting_gap(
 
     for ax, (title, score, color) in zip(axes, panels, strict=True):
         ax.bar([title], [score], color=color, width=0.55)
+        ax.axhline(
+            chance_score,
+            color="#1D4ED8",
+            linestyle="--",
+            linewidth=1.5,
+            label="Chance (prior-random)",
+        )
         ax.set_title(title)
         ax.set_ylim(0, 1)
         ax.set_ylabel(metric_name.replace("_", " ").title())
-        ax.text(0, min(score + 0.04, 0.96), f"{score:.3f}", ha="center")
+        delta_vs_chance = score - chance_score
+        ax.text(
+            0,
+            min(score + 0.04, 0.96),
+            f"{score:.3f}\nΔ={delta_vs_chance:+.3f}",
+            ha="center",
+        )
         ax.tick_params(axis="x", labelrotation=15)
         ax.grid(axis="y", alpha=0.25)
+        ax.legend(loc="lower right", fontsize=8)
 
     gap = train_score - cv_score
+    train_delta = train_score - chance_score
+    cv_delta = cv_score - chance_score
     fig.text(
         0.5,
         0.02,
-        f"n={n_samples} | Generalization gap: {gap:.3f}",
+        (
+            f"n={n_samples} | Generalization gap: {gap:.3f} | "
+            f"Train Δchance: {train_delta:+.3f} | CV Δchance: {cv_delta:+.3f}"
+        ),
         ha="center",
         fontsize=11,
     )
@@ -404,11 +439,13 @@ def main() -> None:
     best_model = grid_search.best_estimator_
     y_pred = best_model.predict(x)
     train_score = score_predictions(args.metric, y, y_pred, args.poslabel)
+    chance_score = compute_chance_score(args.metric, y, args.poslabel)
     overfitting_figure = build_overfitting_figure_path(args.metric, args.poslabel)
     title, subtitle = build_overfitting_titles(args.metric, args.poslabel)
     plot_overfitting_gap(
         train_score=train_score,
         cv_score=grid_search.best_score_,
+        chance_score=chance_score,
         metric_name=METRIC_DISPLAY_NAMES[args.metric],
         n_samples=len(y),
         output_path=overfitting_figure,
@@ -420,6 +457,9 @@ def main() -> None:
     print(metrics.classification_report(y, y_pred, zero_division=0))
     print(f"Same-data {args.metric}: {train_score:.4f}")
     print(f"Cross-validation {args.metric}: {grid_search.best_score_:.4f}")
+    print(f"Chance baseline ({args.metric}): {chance_score:.4f}")
+    print(f"Train Δchance: {train_score - chance_score:+.4f}")
+    print(f"CV Δchance: {grid_search.best_score_ - chance_score:+.4f}")
     print(f"Overfitting figure saved to: {overfitting_figure}")
 
 
