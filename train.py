@@ -22,10 +22,14 @@ from sklearn.preprocessing import StandardScaler
 DATA_DIR = Path(__file__).resolve().parent / "Trio-data"
 LABELS_CSV = "trio_data_labels_only_outcomes.csv"
 OUTPUT_DIR = Path(__file__).resolve().parent / "data" / "outputs"
-OVERFITTING_FIGURE = OUTPUT_DIR / "overfitting_gap.png"
 LABEL_MAP = {"MTD": "MTDpos", "MTD_no_lession": "MTDneg", "AdLD": "AdLD"}
 VALID_LABELS = tuple(LABEL_MAP.values())
-VALID_METRICS = ("balanced_accuracy", "recall")
+VALID_METRICS = ("balanced_accuracy", "sen", "ppv")
+METRIC_DISPLAY_NAMES = {
+    "balanced_accuracy": "balanced accuracy",
+    "sen": "sensitivity",
+    "ppv": "positive predictive value",
+}
 
 if not DATA_DIR.exists():
     raise FileNotFoundError(f"Data directory not found: {DATA_DIR}")
@@ -46,12 +50,12 @@ def parse_args() -> argparse.Namespace:
         choices=VALID_LABELS,
         help=(
             "Positive label for binary training. If omitted, the script trains "
-            "a multinomial model. Required when --metric recall is used."
+            "a multinomial model. Required when --metric sen or ppv is used."
         ),
     )
     args = parser.parse_args()
-    if args.metric == "recall" and args.poslabel is None:
-        parser.error("--metric recall requires --poslabel for binary recall scoring.")
+    if args.metric in ("sen", "ppv") and args.poslabel is None:
+        parser.error(f"--metric {args.metric} requires --poslabel for binary scoring.")
     return args
 
 
@@ -279,8 +283,12 @@ def build_scorer(metric_name: str, poslabel: str | None) -> str | Any:
     if metric_name == "balanced_accuracy":
         return "balanced_accuracy"
     if poslabel is None:
-        raise ValueError("Recall scoring requires a positive label.")
-    return make_scorer(metrics.recall_score, pos_label=poslabel, zero_division=0)
+        raise ValueError(f"{metric_name} scoring requires a positive label.")
+    if metric_name == "sen":
+        return make_scorer(metrics.recall_score, pos_label=poslabel, zero_division=0)
+    if metric_name == "ppv":
+        return make_scorer(metrics.precision_score, pos_label=poslabel, zero_division=0)
+    raise ValueError(f"Unknown metric: {metric_name}")
 
 
 def score_predictions(
@@ -292,8 +300,30 @@ def score_predictions(
     if metric_name == "balanced_accuracy":
         return metrics.balanced_accuracy_score(y_true, y_pred)
     if poslabel is None:
-        raise ValueError("Recall scoring requires a positive label.")
-    return metrics.recall_score(y_true, y_pred, pos_label=poslabel, zero_division=0)
+        raise ValueError(f"{metric_name} scoring requires a positive label.")
+    if metric_name == "sen":
+        return metrics.recall_score(y_true, y_pred, pos_label=poslabel, zero_division=0)
+    if metric_name == "ppv":
+        return metrics.precision_score(y_true, y_pred, pos_label=poslabel, zero_division=0)
+    raise ValueError(f"Unknown metric: {metric_name}")
+
+
+def build_overfitting_figure_path(metric_name: str, poslabel: str | None) -> Path:
+    if poslabel is None:
+        filename = f"overfitting_gap__model-multinomial__metric-{metric_name}.png"
+    else:
+        filename = (
+            f"overfitting_gap__model-binary__metric-{metric_name}"
+            f"__poslabel-{poslabel}.png"
+        )
+    return OUTPUT_DIR / filename
+
+
+def build_overfitting_titles(metric_name: str, poslabel: str | None) -> tuple[str, str]:
+    display = METRIC_DISPLAY_NAMES[metric_name]
+    if poslabel is None:
+        return "Overfitting Check: Multinomial Model", display
+    return f"Overfitting Check: Binary Model, {poslabel} vs Rest", display
 
 
 def plot_overfitting_gap(
@@ -302,6 +332,8 @@ def plot_overfitting_gap(
     metric_name: str,
     n_samples: int,
     output_path: Path,
+    title: str,
+    subtitle: str,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -310,8 +342,8 @@ def plot_overfitting_gap(
         ("3-fold cross-validation", cv_score, "#B45309"),
     ]
     fig, axes = plt.subplots(1, 2, figsize=(9, 4), sharey=True)
-    fig.suptitle("Overfitting Check: Same-Data vs Cross-Validation", fontsize=14)
-    fig.text(0.5, 0.91, f"Metric: {metric_name} | n={n_samples}", ha="center")
+    fig.suptitle(title, fontsize=14)
+    fig.text(0.5, 0.91, subtitle, ha="center")
 
     for ax, (title, score, color) in zip(axes, panels, strict=True):
         ax.bar([title], [score], color=color, width=0.55)
@@ -323,7 +355,13 @@ def plot_overfitting_gap(
         ax.grid(axis="y", alpha=0.25)
 
     gap = train_score - cv_score
-    fig.text(0.5, 0.02, f"Generalization gap: {gap:.3f}", ha="center", fontsize=11)
+    fig.text(
+        0.5,
+        0.02,
+        f"n={n_samples} | Generalization gap: {gap:.3f}",
+        ha="center",
+        fontsize=11,
+    )
     fig.tight_layout(rect=[0, 0.05, 1, 0.88])
     fig.savefig(output_path, dpi=200)
     plt.close(fig)
@@ -366,19 +404,23 @@ def main() -> None:
     best_model = grid_search.best_estimator_
     y_pred = best_model.predict(x)
     train_score = score_predictions(args.metric, y, y_pred, args.poslabel)
+    overfitting_figure = build_overfitting_figure_path(args.metric, args.poslabel)
+    title, subtitle = build_overfitting_titles(args.metric, args.poslabel)
     plot_overfitting_gap(
         train_score=train_score,
         cv_score=grid_search.best_score_,
-        metric_name=args.metric,
+        metric_name=METRIC_DISPLAY_NAMES[args.metric],
         n_samples=len(y),
-        output_path=OVERFITTING_FIGURE,
+        output_path=overfitting_figure,
+        title=title,
+        subtitle=subtitle,
     )
 
     print("\n=== Final Performance Profile ===")
     print(metrics.classification_report(y, y_pred, zero_division=0))
     print(f"Same-data {args.metric}: {train_score:.4f}")
     print(f"Cross-validation {args.metric}: {grid_search.best_score_:.4f}")
-    print(f"Overfitting figure saved to: {OVERFITTING_FIGURE}")
+    print(f"Overfitting figure saved to: {overfitting_figure}")
 
 
 if __name__ == "__main__":
