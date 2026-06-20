@@ -12,3 +12,8 @@ train-mtd_neg:
     uv run train.py --metric spc --poslabel MTDneg
     uv run train.py --metric sen --poslabel MTDneg
     uv run train.py --metric ppv --poslabel MTDneg
+train-all:
+    train-multi
+    train-adld
+    train-mtd_pos
+    train-mtd_neg
