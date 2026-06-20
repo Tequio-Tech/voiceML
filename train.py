@@ -19,7 +19,7 @@ from sklearn.model_selection import GridSearchCV, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-DATA_DIR = Path(__file__).resolve().parent / "Trio-data"
+DATA_DIR = Path(__file__).resolve().parent / "data/training"
 LABELS_CSV = "trio_data_labels_only_outcomes.csv"
 OUTPUT_DIR = Path(__file__).resolve().parent / "data" / "outputs"
 LABEL_MAP = {"MTD": "MTDpos", "MTD_no_lession": "MTDneg", "AdLD": "AdLD"}
@@ -304,7 +304,9 @@ def score_predictions(
     if metric_name == "sen":
         return metrics.recall_score(y_true, y_pred, pos_label=poslabel, zero_division=0)
     if metric_name == "ppv":
-        return metrics.precision_score(y_true, y_pred, pos_label=poslabel, zero_division=0)
+        return metrics.precision_score(
+            y_true, y_pred, pos_label=poslabel, zero_division=0
+        )
     raise ValueError(f"Unknown metric: {metric_name}")
 
 
