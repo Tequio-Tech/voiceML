@@ -24,11 +24,18 @@ LABELS_CSV = "trio_data_labels_only_outcomes.csv"
 OUTPUT_DIR = Path(__file__).resolve().parent / "data" / "outputs"
 LABEL_MAP = {"MTD": "MTDpos", "MTD_no_lession": "MTDneg", "AdLD": "AdLD"}
 VALID_LABELS = tuple(LABEL_MAP.values())
-VALID_METRICS = ("balanced_accuracy", "sen", "ppv")
+VALID_METRICS = ("balanced_accuracy", "sen", "ppv", "f1")
 METRIC_DISPLAY_NAMES = {
     "balanced_accuracy": "balanced accuracy",
     "sen": "sensitivity",
     "ppv": "positive predictive value",
+    "f1": "F1 score",
+}
+BINARY_CV_PROFILE_METRICS = {
+    "ppv": "PPV",
+    "sen": "sensitivity",
+    "specificity": "specificity",
+    "f1": "F1",
 }
 
 if not DATA_DIR.exists():
@@ -50,11 +57,11 @@ def parse_args() -> argparse.Namespace:
         choices=VALID_LABELS,
         help=(
             "Positive label for binary training. If omitted, the script trains "
-            "a multinomial model. Required when --metric sen or ppv is used."
+            "a multinomial model. Required when --metric sen, ppv, or f1 is used."
         ),
     )
     args = parser.parse_args()
-    if args.metric in ("sen", "ppv") and args.poslabel is None:
+    if args.metric in ("sen", "ppv", "f1") and args.poslabel is None:
         parser.error(f"--metric {args.metric} requires --poslabel for binary scoring.")
     return args
 
@@ -288,7 +295,25 @@ def build_scorer(metric_name: str, poslabel: str | None) -> str | Any:
         return make_scorer(metrics.recall_score, pos_label=poslabel, zero_division=0)
     if metric_name == "ppv":
         return make_scorer(metrics.precision_score, pos_label=poslabel, zero_division=0)
+    if metric_name == "f1":
+        return make_scorer(metrics.f1_score, pos_label=poslabel, zero_division=0)
     raise ValueError(f"Unknown metric: {metric_name}")
+
+
+def build_grid_scoring(metric_name: str, poslabel: str | None) -> str | dict[str, Any]:
+    if poslabel is None:
+        return build_scorer(metric_name, poslabel)
+
+    not_poslabel = f"not_{poslabel}"
+    return {
+        "balanced_accuracy": "balanced_accuracy",
+        "ppv": make_scorer(metrics.precision_score, pos_label=poslabel, zero_division=0),
+        "sen": make_scorer(metrics.recall_score, pos_label=poslabel, zero_division=0),
+        "specificity": make_scorer(
+            metrics.recall_score, pos_label=not_poslabel, zero_division=0
+        ),
+        "f1": make_scorer(metrics.f1_score, pos_label=poslabel, zero_division=0),
+    }
 
 
 def score_predictions(
@@ -307,6 +332,8 @@ def score_predictions(
         return metrics.precision_score(
             y_true, y_pred, pos_label=poslabel, zero_division=0
         )
+    if metric_name == "f1":
+        return metrics.f1_score(y_true, y_pred, pos_label=poslabel, zero_division=0)
     raise ValueError(f"Unknown metric: {metric_name}")
 
 
@@ -320,7 +347,7 @@ def compute_chance_score(
         return float(priors.mean())
     if poslabel is None:
         raise ValueError(f"{metric_name} chance scoring requires a positive label.")
-    if metric_name in ("sen", "ppv"):
+    if metric_name in ("sen", "ppv", "f1"):
         return float(priors.get(poslabel, 0.0))
     raise ValueError(f"Unknown metric: {metric_name}")
 
@@ -333,6 +360,14 @@ def build_overfitting_figure_path(metric_name: str, poslabel: str | None) -> Pat
             f"overfitting_gap__model-binary__metric-{metric_name}"
             f"__poslabel-{poslabel}.png"
         )
+    return OUTPUT_DIR / filename
+
+
+def build_cv_metric_profile_figure_path(metric_name: str, poslabel: str) -> Path:
+    filename = (
+        f"cv_metric_profile__model-binary__metric-{metric_name}"
+        f"__poslabel-{poslabel}.png"
+    )
     return OUTPUT_DIR / filename
 
 
@@ -404,6 +439,74 @@ def plot_overfitting_gap(
     plt.close(fig)
 
 
+def extract_binary_cv_metric_profile(
+    grid_search: GridSearchCV, n_splits: int
+) -> pd.DataFrame:
+    rows = {}
+    best_index = grid_search.best_index_
+    for metric_name, display_name in BINARY_CV_PROFILE_METRICS.items():
+        fold_values = [
+            grid_search.cv_results_[f"split{fold_idx}_test_{metric_name}"][best_index]
+            for fold_idx in range(n_splits)
+        ]
+        rows[display_name] = {
+            **{
+                f"fold_{fold_idx + 1}": fold_value
+                for fold_idx, fold_value in enumerate(fold_values)
+            },
+            "mean": grid_search.cv_results_[f"mean_test_{metric_name}"][best_index],
+            "std": grid_search.cv_results_[f"std_test_{metric_name}"][best_index],
+        }
+    return pd.DataFrame.from_dict(rows, orient="index")
+
+
+def plot_binary_cv_metric_profile(
+    profile: pd.DataFrame,
+    output_path: Path,
+    poslabel: str,
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fold_columns = [column for column in profile.columns if column.startswith("fold_")]
+    x = np.arange(1, len(fold_columns) + 1)
+
+    fig, axes = plt.subplots(2, 2, figsize=(10, 7), sharey=True)
+    fig.suptitle(f"3-Fold CV Metric Profile: {poslabel} vs Rest", fontsize=14)
+
+    colors = ["#0F766E", "#B45309", "#1D4ED8", "#7C2D12"]
+    for ax, (metric_label, row), color in zip(
+        axes.ravel(), profile.iterrows(), colors, strict=True
+    ):
+        fold_values = row[fold_columns].astype(float).to_numpy()
+        mean_value = float(row["mean"])
+        ax.plot(x, fold_values, color=color, marker="o", linewidth=2)
+        ax.axhline(
+            mean_value,
+            color="#111827",
+            linestyle="--",
+            linewidth=1.25,
+            label=f"mean={mean_value:.3f}",
+        )
+        ax.set_title(metric_label)
+        ax.set_ylim(0, 1)
+        ax.set_xticks(x, [column.replace("_", " ") for column in fold_columns])
+        ax.grid(axis="y", alpha=0.25)
+        ax.legend(loc="lower right", fontsize=8)
+
+        for fold_idx, value in zip(x, fold_values, strict=True):
+            ax.text(
+                fold_idx,
+                min(value + 0.04, 0.96),
+                f"{value:.3f}",
+                ha="center",
+                fontsize=9,
+            )
+
+    fig.tight_layout(rect=[0, 0.02, 1, 0.94])
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
+
+
 def main() -> None:
     args = parse_args()
     labelsdf = collect_labels(DATA_DIR / LABELS_CSV)
@@ -414,12 +517,14 @@ def main() -> None:
     pipeline = build_pipeline()
     param_grid = build_param_grid()
     cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
-    scorer = build_scorer(args.metric, args.poslabel)
+    scorer = build_grid_scoring(args.metric, args.poslabel)
+    refit = args.metric if args.poslabel else True
     grid_search = GridSearchCV(
         estimator=pipeline,
         param_grid=param_grid,
         scoring=scorer,
         cv=cv,
+        refit=refit,
         n_jobs=-1,
         verbose=1,
     )
@@ -463,6 +568,17 @@ def main() -> None:
     print(f"Train Δchance: {train_score - chance_score:+.4f}")
     print(f"CV Δchance: {grid_search.best_score_ - chance_score:+.4f}")
     print(f"Overfitting figure saved to: {overfitting_figure}")
+
+    if args.poslabel:
+        n_splits = cv.get_n_splits(x, y)
+        cv_profile = extract_binary_cv_metric_profile(grid_search, n_splits)
+        cv_profile_figure = build_cv_metric_profile_figure_path(
+            args.metric, args.poslabel
+        )
+        plot_binary_cv_metric_profile(cv_profile, cv_profile_figure, args.poslabel)
+        print("\n=== Cross-Validated Binary Metric Profile ===")
+        print(cv_profile.to_string(float_format=lambda value: f"{value:.4f}"))
+        print(f"CV metric profile figure saved to: {cv_profile_figure}")
 
 
 if __name__ == "__main__":
