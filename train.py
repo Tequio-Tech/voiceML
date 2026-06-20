@@ -60,9 +60,17 @@ def parse_args() -> argparse.Namespace:
             "a multinomial model. Required when --metric sen, ppv, or f1 is used."
         ),
     )
+    parser.add_argument(
+        "--cv",
+        type=int,
+        default=3,
+        help="Number of folds for stratified cross-validation (default: 3).",
+    )
     args = parser.parse_args()
     if args.metric in ("sen", "ppv", "f1") and args.poslabel is None:
         parser.error(f"--metric {args.metric} requires --poslabel for binary scoring.")
+    if args.cv < 2:
+        parser.error("--cv must be at least 2.")
     return args
 
 
@@ -387,12 +395,13 @@ def plot_overfitting_gap(
     output_path: Path,
     title: str,
     subtitle: str,
+    n_splits: int,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     panels = [
         ("Same-data performance", train_score, "#0F766E"),
-        ("3-fold cross-validation", cv_score, "#B45309"),
+        (f"{n_splits}-fold cross-validation", cv_score, "#B45309"),
     ]
     fig, axes = plt.subplots(1, 2, figsize=(9, 4), sharey=True)
     fig.suptitle(title, fontsize=14)
@@ -469,6 +478,7 @@ def plot_evaluation_summary(
     cv_profile: pd.DataFrame,
     output_path: Path,
     poslabel: str,
+    n_splits: int,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -477,7 +487,7 @@ def plot_evaluation_summary(
 
     # --- Left Panel: Overfitting Check ---
     bars1 = ax1.bar(
-        ["Same-data", "3-fold CV"],
+        ["Same-data", f"{n_splits}-fold CV"],
         [train_score, cv_score],
         color=["#0F766E", "#B45309"],
         width=0.5,
@@ -530,7 +540,7 @@ def plot_evaluation_summary(
         width=0.5,
         edgecolor="none",
     )
-    ax2.set_title("3-Fold CV Metric Profile", fontsize=12)
+    ax2.set_title(f"{n_splits}-Fold CV Metric Profile", fontsize=12)
     ax2.set_ylim(0, 1.05)
     ax2.set_ylabel("Metric Value")
     ax2.grid(axis="y", alpha=0.25)
@@ -561,7 +571,7 @@ def main() -> None:
 
     pipeline = build_pipeline()
     param_grid = build_param_grid()
-    cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+    cv = StratifiedKFold(n_splits=args.cv, shuffle=True, random_state=42)
     scorer = build_grid_scoring(args.metric, args.poslabel)
     refit = args.metric if args.poslabel else True
     grid_search = GridSearchCV(
@@ -579,6 +589,7 @@ def main() -> None:
     print(f"Metric: {args.metric}")
     if args.poslabel:
         print(f"Positive label: {args.poslabel}")
+    print(f"Cross-validation folds: {args.cv}")
     print("Starting hyperparameter tuning...")
     grid_search.fit(x, y)
 
@@ -592,8 +603,8 @@ def main() -> None:
     y_pred = best_model.predict(x)
     train_score = score_predictions(args.metric, y, y_pred, args.poslabel)
     chance_score = compute_chance_score(args.metric, y, args.poslabel)
+    n_splits = cv.get_n_splits(x, y)
     if args.poslabel:
-        n_splits = cv.get_n_splits(x, y)
         cv_profile = extract_binary_cv_metric_profile(grid_search, n_splits)
         summary_figure = build_evaluation_summary_figure_path(
             args.metric, args.poslabel
@@ -607,6 +618,7 @@ def main() -> None:
             cv_profile=cv_profile,
             output_path=summary_figure,
             poslabel=args.poslabel,
+            n_splits=n_splits,
         )
         print(f"Same-data {args.metric}: {train_score:.2f}")
         print(f"Cross-validation {args.metric}: {grid_search.best_score_:.2f}")
@@ -614,7 +626,7 @@ def main() -> None:
         print(f"Train Δchance: {train_score - chance_score:+.2f}")
         print(f"CV Δchance: {grid_search.best_score_ - chance_score:+.2f}")
         print(f"Evaluation summary figure saved to: {summary_figure}")
-        print("\n=== Cross-Validated Binary Metric Profile ===")
+        print(f"\n=== Cross-Validated Binary Metric Profile ({n_splits} folds) ===")
         print(cv_profile.to_string(float_format=lambda value: f"{value:.2f}"))
     else:
         overfitting_figure = build_overfitting_figure_path(args.metric, args.poslabel)
@@ -628,6 +640,7 @@ def main() -> None:
             output_path=overfitting_figure,
             title=title,
             subtitle=subtitle,
+            n_splits=n_splits,
         )
         print(f"Same-data {args.metric}: {train_score:.2f}")
         print(f"Cross-validation {args.metric}: {grid_search.best_score_:.2f}")
