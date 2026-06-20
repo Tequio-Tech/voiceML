@@ -16,7 +16,7 @@ Use `uv` to run the project environment.
 Train the default multinomial model with the three normalized outcomes `MTDpos`, `MTDneg`, and `AdLD`:
 
 ```bash
-uv run train.py --metric balanced_accuracy
+uv run train.py --metric bal_acc
 ```
 
 Train a binary model for one positive outcome versus all other outcomes:
@@ -24,7 +24,7 @@ Train a binary model for one positive outcome versus all other outcomes:
 ```bash
 uv run train.py --metric sen --poslabel AdLD
 uv run train.py --metric ppv --poslabel AdLD
-uv run train.py --metric f1 --poslabel AdLD
+uv run train.py --metric spc --poslabel AdLD
 ```
 
 Valid positive labels are:
@@ -39,13 +39,13 @@ configuration-specific filename.
 For the default multinomial model:
 
 ```bash
-uv run train.py --metric balanced_accuracy
+uv run train.py --metric bal_acc
 ```
 
 writes:
 
 ```text
-data/outputs/overfitting_gap__model-multinomial__metric-balanced_accuracy.png
+data/outputs/overfitting_gap__model-multinomial__metric-bal_acc.png
 ```
 
 For a binary sensitivity model:
@@ -72,21 +72,21 @@ writes:
 data/outputs/overfitting_gap__model-binary__metric-ppv__poslabel-AdLD.png
 ```
 
-For a binary F1 model:
+For a binary SPC model:
 
 ```bash
-uv run train.py --metric f1 --poslabel AdLD
+uv run train.py --metric spc --poslabel AdLD
 ```
 
 writes:
 
 ```text
-data/outputs/overfitting_gap__model-binary__metric-f1__poslabel-AdLD.png
-data/outputs/cv_metric_profile__model-binary__metric-f1__poslabel-AdLD.png
+data/outputs/overfitting_gap__model-binary__metric-spc__poslabel-AdLD.png
+data/outputs/evaluation_summary__model-binary__metric-spc__poslabel-AdLD.png
 ```
 
 The figure compares same-data performance against 3-fold cross-validation performance. A large gap is expected with this small sample size (`n=29`) and should be interpreted as evidence of overfitting risk.
 
 Binary runs also print a 3-fold cross-validated metric profile for PPV,
-sensitivity, specificity, and F1, and save the matching profile figure to
+SEN, and SPC, and save the matching evaluation summary figure to
 `data/outputs`.

@@ -24,18 +24,17 @@ LABELS_CSV = "trio_data_labels_only_outcomes.csv"
 OUTPUT_DIR = Path(__file__).resolve().parent / "data" / "outputs"
 LABEL_MAP = {"MTD": "MTDpos", "MTD_no_lession": "MTDneg", "AdLD": "AdLD"}
 VALID_LABELS = tuple(LABEL_MAP.values())
-VALID_METRICS = ("balanced_accuracy", "sen", "ppv", "f1")
+VALID_METRICS = ("bal_acc", "sen", "ppv", "spc")
 METRIC_DISPLAY_NAMES = {
-    "balanced_accuracy": "balanced accuracy",
+    "bal_acc": "balanced accuracy",
     "sen": "sensitivity",
     "ppv": "positive predictive value",
-    "f1": "F1 score",
+    "spc": "specificity",
 }
 BINARY_CV_PROFILE_METRICS = {
     "ppv": "PPV",
-    "sen": "sensitivity",
-    "specificity": "specificity",
-    "f1": "F1",
+    "sen": "SEN",
+    "spc": "SPC",
 }
 
 if not DATA_DIR.exists():
@@ -49,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--metric",
         choices=VALID_METRICS,
-        default="balanced_accuracy",
+        default="bal_acc",
         help="Metric to optimize during grid search.",
     )
     parser.add_argument(
@@ -57,7 +56,7 @@ def parse_args() -> argparse.Namespace:
         choices=VALID_LABELS,
         help=(
             "Positive label for binary training. If omitted, the script trains "
-            "a multinomial model. Required when --metric sen, ppv, or f1 is used."
+            "a multinomial model. Required when --metric sen, ppv, or spc is used."
         ),
     )
     parser.add_argument(
@@ -67,7 +66,7 @@ def parse_args() -> argparse.Namespace:
         help="Number of folds for stratified cross-validation (default: 3).",
     )
     args = parser.parse_args()
-    if args.metric in ("sen", "ppv", "f1") and args.poslabel is None:
+    if args.metric in ("sen", "ppv", "spc") and args.poslabel is None:
         parser.error(f"--metric {args.metric} requires --poslabel for binary scoring.")
     if args.cv < 2:
         parser.error("--cv must be at least 2.")
@@ -295,7 +294,7 @@ def build_target(labels: pd.DataFrame, poslabel: str | None) -> pd.Series:
 
 
 def build_scorer(metric_name: str, poslabel: str | None) -> str | Any:
-    if metric_name == "balanced_accuracy":
+    if metric_name == "bal_acc":
         return "balanced_accuracy"
     if poslabel is None:
         raise ValueError(f"{metric_name} scoring requires a positive label.")
@@ -303,8 +302,9 @@ def build_scorer(metric_name: str, poslabel: str | None) -> str | Any:
         return make_scorer(metrics.recall_score, pos_label=poslabel, zero_division=0)
     if metric_name == "ppv":
         return make_scorer(metrics.precision_score, pos_label=poslabel, zero_division=0)
-    if metric_name == "f1":
-        return make_scorer(metrics.f1_score, pos_label=poslabel, zero_division=0)
+    if metric_name == "spc":
+        not_poslabel = f"not_{poslabel}"
+        return make_scorer(metrics.recall_score, pos_label=not_poslabel, zero_division=0)
     raise ValueError(f"Unknown metric: {metric_name}")
 
 
@@ -314,13 +314,12 @@ def build_grid_scoring(metric_name: str, poslabel: str | None) -> str | dict[str
 
     not_poslabel = f"not_{poslabel}"
     return {
-        "balanced_accuracy": "balanced_accuracy",
+        "bal_acc": "balanced_accuracy",
         "ppv": make_scorer(metrics.precision_score, pos_label=poslabel, zero_division=0),
         "sen": make_scorer(metrics.recall_score, pos_label=poslabel, zero_division=0),
-        "specificity": make_scorer(
+        "spc": make_scorer(
             metrics.recall_score, pos_label=not_poslabel, zero_division=0
         ),
-        "f1": make_scorer(metrics.f1_score, pos_label=poslabel, zero_division=0),
     }
 
 
@@ -330,7 +329,7 @@ def score_predictions(
     y_pred: npt.ArrayLike,
     poslabel: str | None,
 ) -> float:
-    if metric_name == "balanced_accuracy":
+    if metric_name == "bal_acc":
         return metrics.balanced_accuracy_score(y_true, y_pred)
     if poslabel is None:
         raise ValueError(f"{metric_name} scoring requires a positive label.")
@@ -340,8 +339,11 @@ def score_predictions(
         return metrics.precision_score(
             y_true, y_pred, pos_label=poslabel, zero_division=0
         )
-    if metric_name == "f1":
-        return metrics.f1_score(y_true, y_pred, pos_label=poslabel, zero_division=0)
+    if metric_name == "spc":
+        not_poslabel = f"not_{poslabel}"
+        return metrics.recall_score(
+            y_true, y_pred, pos_label=not_poslabel, zero_division=0
+        )
     raise ValueError(f"Unknown metric: {metric_name}")
 
 
@@ -351,11 +353,14 @@ def compute_chance_score(
     poslabel: str | None,
 ) -> float:
     priors = y.value_counts(normalize=True)
-    if metric_name == "balanced_accuracy":
+    if metric_name == "bal_acc":
         return float(priors.mean())
     if poslabel is None:
         raise ValueError(f"{metric_name} chance scoring requires a positive label.")
-    if metric_name in ("sen", "ppv", "f1"):
+    if metric_name in ("sen", "ppv", "spc"):
+        if metric_name == "spc":
+            not_poslabel = f"not_{poslabel}"
+            return float(priors.get(not_poslabel, 0.0))
         return float(priors.get(poslabel, 0.0))
     raise ValueError(f"Unknown metric: {metric_name}")
 
