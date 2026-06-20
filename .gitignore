@@ -1,5 +1,6 @@
 scratch.md
-
+.png
+.uv-cache
 # PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
 __pycache__/
 
@@ -38,3 +39,5 @@ Icon?
 .fseventsd
 *.wav
 __marimo__
+methods.md
+figure1.excalidraw
