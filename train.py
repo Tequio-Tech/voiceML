@@ -422,14 +422,15 @@ def plot_overfitting_gap(
             label="Chance (prior-random)",
         )
         ax.set_title(title)
-        ax.set_ylim(0, 1)
+        ax.set_ylim(0, 1.15)
         ax.set_ylabel(metric_name.replace("_", " ").title())
         delta_vs_chance = score - chance_score
         ax.text(
             0,
-            min(score + 0.04, 0.96),
+            score + 0.02,
             f"{score:.2f}\nΔ={delta_vs_chance:+.2f}",
             ha="center",
+            va="bottom",
         )
         ax.tick_params(axis="x", labelrotation=15)
         ax.grid(axis="y", alpha=0.25)
@@ -505,7 +506,7 @@ def plot_evaluation_summary(
         label=f"Chance ({chance_score:.2f})",
     )
     ax1.set_title("Overfitting Check", fontsize=12)
-    ax1.set_ylim(0, 1.05)
+    ax1.set_ylim(0, 1.15)
     ax1.set_ylabel(metric_name.replace("_", " ").title())
     ax1.grid(axis="y", alpha=0.25)
     ax1.legend(loc="lower right", fontsize=9)
@@ -515,7 +516,7 @@ def plot_evaluation_summary(
         delta = score - chance_score
         ax1.text(
             bar.get_x() + bar.get_width() / 2,
-            min(score + 0.02, 0.98),
+            score + 0.02,
             f"{score:.2f}\nΔ={delta:+.2f}",
             ha="center",
             va="bottom",
@@ -546,13 +547,13 @@ def plot_evaluation_summary(
         edgecolor="none",
     )
     ax2.set_title(f"{n_splits}-Fold CV Metric Profile", fontsize=12)
-    ax2.set_ylim(0, 1.05)
+    ax2.set_ylim(0, 1.15)
     ax2.set_ylabel("Metric Value")
     ax2.grid(axis="y", alpha=0.25)
 
     # Add labels on top of the error bars or bars
     for bar, mean_val, std_val in zip(bars2, means, stds, strict=True):
-        label_y = min(mean_val + std_val + 0.02, 0.98)
+        label_y = mean_val + std_val + 0.02
         ax2.text(
             bar.get_x() + bar.get_width() / 2,
             label_y,
