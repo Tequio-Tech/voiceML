@@ -363,9 +363,9 @@ def build_overfitting_figure_path(metric_name: str, poslabel: str | None) -> Pat
     return OUTPUT_DIR / filename
 
 
-def build_cv_metric_profile_figure_path(metric_name: str, poslabel: str) -> Path:
+def build_evaluation_summary_figure_path(metric_name: str, poslabel: str) -> Path:
     filename = (
-        f"cv_metric_profile__model-binary__metric-{metric_name}"
+        f"evaluation_summary__model-binary__metric-{metric_name}"
         f"__poslabel-{poslabel}.png"
     )
     return OUTPUT_DIR / filename
@@ -414,7 +414,7 @@ def plot_overfitting_gap(
         ax.text(
             0,
             min(score + 0.04, 0.96),
-            f"{score:.3f}\nΔ={delta_vs_chance:+.3f}",
+            f"{score:.2f}\nΔ={delta_vs_chance:+.2f}",
             ha="center",
         )
         ax.tick_params(axis="x", labelrotation=15)
@@ -428,8 +428,8 @@ def plot_overfitting_gap(
         0.5,
         0.02,
         (
-            f"n={n_samples} | Generalization gap: {gap:.3f} | "
-            f"Train Δchance: {train_delta:+.3f} | CV Δchance: {cv_delta:+.3f}"
+            f"n={n_samples} | Generalization gap: {gap:.2f} | "
+            f"Train Δchance: {train_delta:+.2f} | CV Δchance: {cv_delta:+.2f}"
         ),
         ha="center",
         fontsize=11,
@@ -460,49 +460,94 @@ def extract_binary_cv_metric_profile(
     return pd.DataFrame.from_dict(rows, orient="index")
 
 
-def plot_binary_cv_metric_profile(
-    profile: pd.DataFrame,
+def plot_evaluation_summary(
+    train_score: float,
+    cv_score: float,
+    chance_score: float,
+    metric_name: str,
+    n_samples: int,
+    cv_profile: pd.DataFrame,
     output_path: Path,
     poslabel: str,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    fold_columns = [column for column in profile.columns if column.startswith("fold_")]
-    x = np.arange(1, len(fold_columns) + 1)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    fig.suptitle(f"Model Evaluation Summary: Binary Model ({poslabel} vs Rest, Tuned for {metric_name.title()})", fontsize=14)
 
-    fig, axes = plt.subplots(2, 2, figsize=(10, 7), sharey=True)
-    fig.suptitle(f"3-Fold CV Metric Profile: {poslabel} vs Rest", fontsize=14)
+    # --- Left Panel: Overfitting Check ---
+    bars1 = ax1.bar(
+        ["Same-data", "3-fold CV"],
+        [train_score, cv_score],
+        color=["#0F766E", "#B45309"],
+        width=0.5,
+    )
+    ax1.axhline(
+        chance_score,
+        color="#1D4ED8",
+        linestyle="--",
+        linewidth=1.5,
+        label=f"Chance ({chance_score:.2f})",
+    )
+    ax1.set_title("Overfitting Check", fontsize=12)
+    ax1.set_ylim(0, 1.05)
+    ax1.set_ylabel(metric_name.replace("_", " ").title())
+    ax1.grid(axis="y", alpha=0.25)
+    ax1.legend(loc="lower right", fontsize=9)
+
+    # Add text labels on top of the bars
+    for bar, score in zip(bars1, [train_score, cv_score], strict=True):
+        delta = score - chance_score
+        ax1.text(
+            bar.get_x() + bar.get_width() / 2,
+            min(score + 0.02, 0.98),
+            f"{score:.2f}\nΔ={delta:+.2f}",
+            ha="center",
+            va="bottom",
+            fontsize=10,
+        )
+
+    gap = train_score - cv_score
+    train_delta = train_score - chance_score
+    cv_delta = cv_score - chance_score
+    ax1.set_xlabel(
+        f"n={n_samples} | Gen gap: {gap:.2f}\nTrain Δchance: {train_delta:+.2f} | CV Δchance: {cv_delta:+.2f}",
+        fontsize=9,
+    )
+
+    # --- Right Panel: Cross-Validation Profile ---
+    metrics_list = list(cv_profile.index)
+    means = cv_profile["mean"].to_numpy()
+    stds = cv_profile["std"].to_numpy()
 
     colors = ["#0F766E", "#B45309", "#1D4ED8", "#7C2D12"]
-    for ax, (metric_label, row), color in zip(
-        axes.ravel(), profile.iterrows(), colors, strict=True
-    ):
-        fold_values = row[fold_columns].astype(float).to_numpy()
-        mean_value = float(row["mean"])
-        ax.plot(x, fold_values, color=color, marker="o", linewidth=2)
-        ax.axhline(
-            mean_value,
-            color="#111827",
-            linestyle="--",
-            linewidth=1.25,
-            label=f"mean={mean_value:.3f}",
+    bars2 = ax2.bar(
+        metrics_list,
+        means,
+        yerr=stds,
+        capsize=6,
+        color=colors,
+        width=0.5,
+        edgecolor="none",
+    )
+    ax2.set_title("3-Fold CV Metric Profile", fontsize=12)
+    ax2.set_ylim(0, 1.05)
+    ax2.set_ylabel("Metric Value")
+    ax2.grid(axis="y", alpha=0.25)
+
+    # Add labels on top of the error bars or bars
+    for bar, mean_val, std_val in zip(bars2, means, stds, strict=True):
+        label_y = min(mean_val + std_val + 0.02, 0.98)
+        ax2.text(
+            bar.get_x() + bar.get_width() / 2,
+            label_y,
+            f"{mean_val:.2f} ± {std_val:.2f}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
         )
-        ax.set_title(metric_label)
-        ax.set_ylim(0, 1)
-        ax.set_xticks(x, [column.replace("_", " ") for column in fold_columns])
-        ax.grid(axis="y", alpha=0.25)
-        ax.legend(loc="lower right", fontsize=8)
 
-        for fold_idx, value in zip(x, fold_values, strict=True):
-            ax.text(
-                fold_idx,
-                min(value + 0.04, 0.96),
-                f"{value:.3f}",
-                ha="center",
-                fontsize=9,
-            )
-
-    fig.tight_layout(rect=[0, 0.02, 1, 0.94])
+    fig.tight_layout(rect=[0, 0.02, 1, 0.95])
     fig.savefig(output_path, dpi=200)
     plt.close(fig)
 
@@ -538,7 +583,7 @@ def main() -> None:
     grid_search.fit(x, y)
 
     print("\n=== Tuning Complete ===")
-    print(f"Best CV {args.metric}: {grid_search.best_score_:.4f}")
+    print(f"Best CV {args.metric}: {grid_search.best_score_:.2f}")
     print("Best Hyperparameters found:")
     for param, val in grid_search.best_params_.items():
         print(f"  {param}: {val}")
@@ -547,38 +592,49 @@ def main() -> None:
     y_pred = best_model.predict(x)
     train_score = score_predictions(args.metric, y, y_pred, args.poslabel)
     chance_score = compute_chance_score(args.metric, y, args.poslabel)
-    overfitting_figure = build_overfitting_figure_path(args.metric, args.poslabel)
-    title, subtitle = build_overfitting_titles(args.metric, args.poslabel)
-    plot_overfitting_gap(
-        train_score=train_score,
-        cv_score=grid_search.best_score_,
-        chance_score=chance_score,
-        metric_name=METRIC_DISPLAY_NAMES[args.metric],
-        n_samples=len(y),
-        output_path=overfitting_figure,
-        title=title,
-        subtitle=subtitle,
-    )
-
-    print("\n=== Final Performance Profile ===")
-    print(metrics.classification_report(y, y_pred, zero_division=0))
-    print(f"Same-data {args.metric}: {train_score:.4f}")
-    print(f"Cross-validation {args.metric}: {grid_search.best_score_:.4f}")
-    print(f"Chance baseline ({args.metric}): {chance_score:.4f}")
-    print(f"Train Δchance: {train_score - chance_score:+.4f}")
-    print(f"CV Δchance: {grid_search.best_score_ - chance_score:+.4f}")
-    print(f"Overfitting figure saved to: {overfitting_figure}")
-
     if args.poslabel:
         n_splits = cv.get_n_splits(x, y)
         cv_profile = extract_binary_cv_metric_profile(grid_search, n_splits)
-        cv_profile_figure = build_cv_metric_profile_figure_path(
+        summary_figure = build_evaluation_summary_figure_path(
             args.metric, args.poslabel
         )
-        plot_binary_cv_metric_profile(cv_profile, cv_profile_figure, args.poslabel)
+        plot_evaluation_summary(
+            train_score=train_score,
+            cv_score=grid_search.best_score_,
+            chance_score=chance_score,
+            metric_name=METRIC_DISPLAY_NAMES[args.metric],
+            n_samples=len(y),
+            cv_profile=cv_profile,
+            output_path=summary_figure,
+            poslabel=args.poslabel,
+        )
+        print(f"Same-data {args.metric}: {train_score:.2f}")
+        print(f"Cross-validation {args.metric}: {grid_search.best_score_:.2f}")
+        print(f"Chance baseline ({args.metric}): {chance_score:.2f}")
+        print(f"Train Δchance: {train_score - chance_score:+.2f}")
+        print(f"CV Δchance: {grid_search.best_score_ - chance_score:+.2f}")
+        print(f"Evaluation summary figure saved to: {summary_figure}")
         print("\n=== Cross-Validated Binary Metric Profile ===")
-        print(cv_profile.to_string(float_format=lambda value: f"{value:.4f}"))
-        print(f"CV metric profile figure saved to: {cv_profile_figure}")
+        print(cv_profile.to_string(float_format=lambda value: f"{value:.2f}"))
+    else:
+        overfitting_figure = build_overfitting_figure_path(args.metric, args.poslabel)
+        title, subtitle = build_overfitting_titles(args.metric, args.poslabel)
+        plot_overfitting_gap(
+            train_score=train_score,
+            cv_score=grid_search.best_score_,
+            chance_score=chance_score,
+            metric_name=METRIC_DISPLAY_NAMES[args.metric],
+            n_samples=len(y),
+            output_path=overfitting_figure,
+            title=title,
+            subtitle=subtitle,
+        )
+        print(f"Same-data {args.metric}: {train_score:.2f}")
+        print(f"Cross-validation {args.metric}: {grid_search.best_score_:.2f}")
+        print(f"Chance baseline ({args.metric}): {chance_score:.2f}")
+        print(f"Train Δchance: {train_score - chance_score:+.2f}")
+        print(f"CV Δchance: {grid_search.best_score_ - chance_score:+.2f}")
+        print(f"Overfitting figure saved to: {overfitting_figure}")
 
 
 if __name__ == "__main__":
